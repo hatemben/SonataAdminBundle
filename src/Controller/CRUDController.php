@@ -24,9 +24,7 @@ use Sonata\AdminBundle\Exception\ModelManagerException;
 use Sonata\AdminBundle\Templating\TemplateRegistryInterface;
 use Sonata\AdminBundle\Util\AdminObjectAclData;
 use Sonata\AdminBundle\Util\AdminObjectAclManipulator;
-use Symfony\Bundle\FrameworkBundle\Controller\ControllerTrait;
-use Symfony\Component\DependencyInjection\ContainerAwareInterface;
-use Symfony\Component\DependencyInjection\ContainerAwareTrait;
+use Symfony\Bundle\FrameworkBundle\Controller\Controller;
 use Symfony\Component\DependencyInjection\ContainerInterface;
 use Symfony\Component\Form\FormInterface;
 use Symfony\Component\Form\FormRenderer;
@@ -45,13 +43,8 @@ use Symfony\Component\Security\Csrf\CsrfToken;
 /**
  * @author Thomas Rabaix <thomas.rabaix@sonata-project.org>
  */
-class CRUDController implements ContainerAwareInterface
+class CRUDController extends Controller
 {
-    // NEXT_MAJOR: Don't use these traits anymore (inherit from Controller instead)
-    use ControllerTrait, ContainerAwareTrait {
-        ControllerTrait::render as originalRender;
-    }
-
     /**
      * The related Admin class.
      *
@@ -70,39 +63,17 @@ class CRUDController implements ContainerAwareInterface
     public function __call($method, $arguments)
     {
         if (\in_array($method, ['get', 'has'], true)) {
-            return $this->container->{$method}(...$arguments);
+            return $this->container->$method(...$arguments);
         }
 
         throw new \LogicException('Call to undefined method '.__CLASS__.'::'.$method);
     }
 
-    public function setContainer(ContainerInterface $container = null)
+    public function setContainer(ContainerInterface $container = null): void
     {
         $this->container = $container;
 
         $this->configure();
-    }
-
-    /**
-     * NEXT_MAJOR: Remove this method.
-     *
-     * @see renderWithExtraParams()
-     *
-     * @param string $view       The view name
-     * @param array  $parameters An array of parameters to pass to the view
-     *
-     * @return Response A Response instance
-     *
-     * @deprecated since sonata-project/admin-bundle 3.27, to be removed in 4.0. Use Sonata\AdminBundle\Controller\CRUDController::renderWithExtraParams() instead.
-     */
-    public function render($view, array $parameters = [], Response $response = null)
-    {
-        @trigger_error(
-            'Method '.__CLASS__.'::render has been renamed to '.__CLASS__.'::renderWithExtraParams.',
-            E_USER_DEPRECATED
-        );
-
-        return $this->renderWithExtraParams($view, $parameters, $response);
     }
 
     /**
@@ -125,8 +96,7 @@ class CRUDController implements ContainerAwareInterface
 
         $parameters['admin_pool'] = $this->get('sonata.admin.pool');
 
-        //NEXT_MAJOR: Remove method alias and use $this->render() directly.
-        return $this->originalRender($view, $parameters, $response);
+        return parent::render($view, $parameters, $response);
     }
 
     /**
@@ -428,7 +398,7 @@ class CRUDController implements ContainerAwareInterface
 
         $confirmation = $request->get('confirmation', false);
 
-        if ($data = json_decode((string) $request->get('data'), true)) {
+        if ($data = json_decode($request->get('data', ''), true)) {
             $action = $data['action'];
             $idx = $data['idx'];
             $allElements = $data['all_elements'];
@@ -445,27 +415,16 @@ class CRUDController implements ContainerAwareInterface
             unset($data['_sonata_csrf_token']);
         }
 
-        // NEXT_MAJOR: Remove reflection check.
-        $reflector = new \ReflectionMethod($this->admin, 'getBatchActions');
-        if ($reflector->getDeclaringClass()->getName() === \get_class($this->admin)) {
-            @trigger_error(
-                'Override Sonata\AdminBundle\Admin\AbstractAdmin::getBatchActions method'
-                .' is deprecated since version 3.2.'
-                .' Use Sonata\AdminBundle\Admin\AbstractAdmin::configureBatchActions instead.'
-                .' The method will be final in 4.0.',
-                E_USER_DEPRECATED
-            );
-        }
         $batchActions = $this->admin->getBatchActions();
         if (!\array_key_exists($action, $batchActions)) {
             throw new \RuntimeException(sprintf('The `%s` batch action is not defined', $action));
         }
 
         $camelizedAction = Inflector::classify($action);
-        $isRelevantAction = sprintf('batchAction%sIsRelevant', $camelizedAction);
+        $isRelevantAction = sprintf('batchAction%sIsRelevant', ucfirst($camelizedAction));
 
         if (method_exists($this, $isRelevantAction)) {
-            $nonRelevantMessage = $this->{$isRelevantAction}($idx, $allElements, $request);
+            $nonRelevantMessage = $this->$isRelevantAction($idx, $allElements, $request);
         } else {
             $nonRelevantMessage = 0 !== \count($idx) || $allElements; // at least one item is selected
         }
@@ -540,7 +499,7 @@ class CRUDController implements ContainerAwareInterface
             return $this->redirectToList();
         }
 
-        return $this->{$finalAction}($query, $request);
+        return $this->$finalAction($query, $request);
     }
 
     /**
@@ -987,7 +946,8 @@ class CRUDController implements ContainerAwareInterface
             throw $this->createNotFoundException('ACL are not enabled for this admin');
         }
 
-        $id = $request->get($this->admin->getIdParameter());
+        $isGroup = explode('/',$request->getPathInfo())[3] == 'group'? true : false;
+
 
         $object = $this->admin->getObject($id);
 
@@ -998,7 +958,7 @@ class CRUDController implements ContainerAwareInterface
         $this->admin->checkAccess('acl', $object);
 
         $this->admin->setSubject($object);
-        $aclUsers = $this->getAclUsers();
+        $aclUsers = $this->getAclUsers($id);
         $aclRoles = $this->getAclRoles();
 
         $adminObjectAclManipulator = $this->get('sonata.admin.object.manipulator.acl.admin');
@@ -1010,11 +970,15 @@ class CRUDController implements ContainerAwareInterface
             $aclRoles
         );
 
-        $aclUsersForm = $adminObjectAclManipulator->createAclUsersForm($adminObjectAclData);
+        if (!$isGroup) {
+            $aclUsersForm = $adminObjectAclManipulator->createAclUsersForm($adminObjectAclData, $id);
+        }
+
         $aclRolesForm = $adminObjectAclManipulator->createAclRolesForm($adminObjectAclData);
 
         if (Request::METHOD_POST === $request->getMethod()) {
-            if ($request->request->has(AdminObjectAclManipulator::ACL_USERS_FORM_NAME)) {
+
+            if ($request->request->has(AdminObjectAclManipulator::ACL_USERS_FORM_NAME) && !$isGroup) {
                 $form = $aclUsersForm;
                 $updateMethod = 'updateAclUsers';
             } elseif ($request->request->has(AdminObjectAclManipulator::ACL_ROLES_FORM_NAME)) {
@@ -1041,13 +1005,18 @@ class CRUDController implements ContainerAwareInterface
         $template = $this->admin->getTemplate('acl');
         // $template = $this->templateRegistry->getTemplate('acl');
 
+        if (!$isGroup){
+            $aclUsersFormView = $aclUsersForm->createView();
+        } else {
+            $aclUsersFormView = false;
+        }
         return $this->renderWithExtraParams($template, [
             'action' => 'acl',
             'permissions' => $adminObjectAclData->getUserPermissions(),
             'object' => $object,
             'users' => $aclUsers,
             'roles' => $aclRoles,
-            'aclUsersForm' => $aclUsersForm->createView(),
+            'aclUsersForm' => $aclUsersFormView,
             'aclRolesForm' => $aclRolesForm->createView(),
         ], null);
     }
@@ -1120,7 +1089,7 @@ class CRUDController implements ContainerAwareInterface
      *
      * @throws \RuntimeException
      */
-    protected function configure()
+    protected function configure(): void
     {
         $request = $this->getRequest();
 
@@ -1204,7 +1173,7 @@ class CRUDController implements ContainerAwareInterface
     /**
      * @throws \Exception
      */
-    protected function handleModelManagerException(\Exception $e)
+    protected function handleModelManagerException(\Exception $e): void
     {
         if ($this->get('kernel')->isDebug()) {
             throw $e;
@@ -1321,9 +1290,9 @@ class CRUDController implements ContainerAwareInterface
     protected function isInPreviewMode()
     {
         return $this->admin->supportsPreviewMode()
-        && ($this->isPreviewRequested()
-            || $this->isPreviewApproved()
-            || $this->isPreviewDeclined());
+            && ($this->isPreviewRequested()
+                || $this->isPreviewApproved()
+                || $this->isPreviewDeclined());
     }
 
     /**
@@ -1339,11 +1308,13 @@ class CRUDController implements ContainerAwareInterface
     }
 
     /**
-     * Gets ACL users.
+     * Gets ACL users, or selected user if $id is provided
+     *
+     * @param string $id|null   User id
      *
      * @return \Traversable
      */
-    protected function getAclUsers()
+    protected function getAclUsers($id = null)
     {
         $aclUsers = [];
 
@@ -1351,11 +1322,17 @@ class CRUDController implements ContainerAwareInterface
         if (null !== $userManagerServiceName && $this->has($userManagerServiceName)) {
             $userManager = $this->get($userManagerServiceName);
 
-            if (method_exists($userManager, 'findUsers')) {
-                $aclUsers = $userManager->findUsers();
+            if ($id != null)
+            {
+                if (method_exists($userManager, 'findUserBy')) {
+                    $aclUsers = array($userManager->findUserBy(['_id'=>$id]));
+                }
+            }  else {
+                if (method_exists($userManager, 'findUsers')) {
+                    $aclUsers = $userManager->findUsers();
+                }
             }
         }
-
         return \is_array($aclUsers) ? new \ArrayIterator($aclUsers) : $aclUsers;
     }
 
@@ -1401,7 +1378,7 @@ class CRUDController implements ContainerAwareInterface
      *
      * @throws HttpException
      */
-    protected function validateCsrfToken($intention)
+    protected function validateCsrfToken($intention): void
     {
         if (false === $this->admin->getFormBuilder()->getOption('csrf_protection')) {
             return;
@@ -1551,8 +1528,7 @@ class CRUDController implements ContainerAwareInterface
 
         if ($parentAdmin->getObject($parentId) !== $propertyAccessor->getValue($object, $propertyPath)) {
             // NEXT_MAJOR: make this exception
-            @trigger_error(
-                "Accessing a child that isn't connected to a given parent is"
+            @trigger_error("Accessing a child that isn't connected to a given parent is"
                 ." deprecated since sonata-project/admin-bundle 3.34 and won't be allowed in 4.0.",
                 E_USER_DEPRECATED
             );
