@@ -21,22 +21,25 @@ file that was distributed with this source code.
 
         <div class="box box-success">
             <div class="body table-responsive no-padding">
-                <table class="table">
+                <table class="table" id="acl">
                     <colgroup>
                         <col style="width: 100%;"/>
                         {% for permission in permissions %}
                             <col/>
                         {% endfor %}
                     </colgroup>
-
+                    
                     {% for child in form.children|filter(child => child.vars.name != '_token') %}
-                        {% if loop.index0 == 0 or loop.index0 % 10 == 0 %}
+                        {% if loop.index0 == 0  %}
+                            <thead>
                             <tr>
                                 <th>{{ td_type|trans({}, 'SonataAdminBundle') }}</th>
                                 {% for permission in permissions %}
                                     <th class="text-right">{{ permission }}</th>
                                 {% endfor %}
                             </tr>
+                            </thead>
+                    <tbody>
                         {% endif %}
 
                         <tr>
@@ -50,6 +53,7 @@ file that was distributed with this source code.
                             {% endfor %}
                         </tr>
                     {% endfor %}
+                </tbody>
                 </table>
             </div>
         </div>
@@ -60,4 +64,9 @@ file that was distributed with this source code.
             <input class="btn btn-primary" type="submit" name="btn_create_and_edit" value="{{ 'btn_update_acl'|trans({}, 'SonataAdminBundle') }}">
         </div>
     </form>
+    <script>
+        $(document).ready(function() {
+            $('#acl').DataTable();
+        } );
+    </script>
 {% endmacro %}
