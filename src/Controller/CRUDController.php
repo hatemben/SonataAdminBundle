@@ -24,6 +24,7 @@ use Sonata\AdminBundle\Exception\ModelManagerException;
 use Sonata\AdminBundle\Templating\TemplateRegistryInterface;
 use Sonata\AdminBundle\Util\AdminObjectAclData;
 use Sonata\AdminBundle\Util\AdminObjectAclManipulator;
+use Sonata\UserBundle\Model\User;
 use Symfony\Bundle\FrameworkBundle\Controller\Controller;
 use Symfony\Component\DependencyInjection\ContainerInterface;
 use Symfony\Component\Form\FormInterface;
@@ -946,9 +947,6 @@ class CRUDController extends Controller
             throw $this->createNotFoundException('ACL are not enabled for this admin');
         }
 
-        $isGroup = explode('/',$request->getPathInfo())[3] == 'group'? true : false;
-
-
         $object = $this->admin->getObject($id);
 
         if (!$object) {
@@ -970,7 +968,7 @@ class CRUDController extends Controller
             $aclRoles
         );
 
-        if (!$isGroup) {
+        if ($object instanceof User) {
             $aclUsersForm = $adminObjectAclManipulator->createAclUsersForm($adminObjectAclData, $id);
         }
 
@@ -978,7 +976,7 @@ class CRUDController extends Controller
 
         if (Request::METHOD_POST === $request->getMethod()) {
 
-            if ($request->request->has(AdminObjectAclManipulator::ACL_USERS_FORM_NAME) && !$isGroup) {
+            if ($request->request->has(AdminObjectAclManipulator::ACL_USERS_FORM_NAME) && $object instanceof User) {
                 $form = $aclUsersForm;
                 $updateMethod = 'updateAclUsers';
             } elseif ($request->request->has(AdminObjectAclManipulator::ACL_ROLES_FORM_NAME)) {
@@ -1005,7 +1003,7 @@ class CRUDController extends Controller
         $template = $this->admin->getTemplate('acl');
         // $template = $this->templateRegistry->getTemplate('acl');
 
-        if (!$isGroup){
+        if ($object instanceof User){
             $aclUsersFormView = $aclUsersForm->createView();
         } else {
             $aclUsersFormView = false;
